@@ -1,0 +1,82 @@
+// Artifactory server instance, defined in Jenkins --> Manage:
+def artifactory_server = 'demo-arti'
+
+// Conan repository in Artifactory server
+def artifactory_repo = 'demo-conan-local'
+
+// User/Pass for Artifactory server
+def user_name = 'admin'
+def user_apikey = 'APBG9f7okturGUX3EH6LhxhbBmR'
+
+// Source Code project in github
+def repo_url = 'https://github.com/xingao0803/demo-poco-timerrun.git'
+def repo_branch = 'master'
+
+// User/Channel for conan package
+def conan_user = 'jfrog'
+def conan_channel = 'stable'
+
+node {
+    def server
+    def client
+    def serverName
+    def buildInfo
+    
+    stage("Get project"){
+        // Clone source code from github:
+        git branch: repo_branch, url: repo_url
+    }
+    
+    stage("Configure Artifactory/Conan"){
+        // Obtain an Artifactory server instance: 
+        server = Artifactory.server artifactory_server
+
+        // Create a conan client instance:
+        client = Artifactory.newConanClient()
+ 
+        // Add a new repository to the conan client.
+        // The 'remote.add' method returns a 'serverName' string, which is used later in the script:
+        serverName = client.remote.add server: server, repo: artifactory_repo
+
+        // Create a local build-info instance:
+        buildInfo = Artifactory.newBuildInfo()
+        
+        // Login the new conan remote server
+        def command = "user -r ${serverName} -p ${user_apikey} ${user_name}"
+        client.run(command: command.toString())
+    }
+
+    stage("Create Package"){
+        // Create package and get dependencies from Artifactory repository
+        def command = "create . ${conan_user}/${conan_channel} -r ${serverName} --build missing"
+        client.run(command: command.toString())
+    }
+
+    stage("Upload package"){
+        // Uplode package to Artifactory repository
+        def command = "upload TimerRun* --all -c -r ${serverName}"
+        client.run(command: command.toString(), buildInfo: buildInfo)
+    }
+
+    stage("Publish buildinfo"){
+        // Publish buildinfo to Artifactory repository
+        server.publishBuildInfo buildInfo
+    }
+    
+    stage("Install Run Package"){
+        sh "mkdir -p run"
+        dir ('run') {
+            def command = "install TimerRun/1.0@jfrog/stable -g virtualrunenv -r ${serverName}"
+            client.run(command: command.toString())
+            sh "source ./activate_run.sh && timerrun"
+        }
+    }
+    
+    stage("Cleanup"){
+        sh "rm -rf build"
+        sh "rm -rf build@tmp"
+        sh "rm -rf run"
+        sh "rm -rf run@tmp"
+    }
+    
+}
